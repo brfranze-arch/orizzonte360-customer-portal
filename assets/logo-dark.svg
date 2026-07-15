@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="420" viewBox="0 0 1600 420">
+    <rect width="1600" height="420" fill="#0F172A"/>
+    <svg x="30" y="40" width="340" height="340" viewBox="0 0 340 340">
+    
+    <circle cx="170.0" cy="170.0" r="115.60000000000001" fill="none" stroke="#2563EB" stroke-width="9.52"/>
+    <circle cx="170.0" cy="170.0" r="90.168" fill="none" stroke="#0F172A" stroke-width="4.08" opacity="0.9"/>
+    <g stroke="#0F172A" stroke-width="3.0599999999999996" stroke-linecap="round">
+      <line x1="170.0" y1="37.06" x2="170.0" y2="52.087999999999994"/>
+      <line x1="302.94" y1="170.0" x2="287.91200000000003" y2="170.0"/>
+      <line x1="170.0" y1="302.94" x2="170.0" y2="287.91200000000003"/>
+      <line x1="37.06" y1="170.0" x2="52.087999999999994" y2="170.0"/>
+    </g>
+    <polygon points="170.00,68.27 196.16,143.84 234.74,170.00 196.16,196.16 170.00,271.73 143.84,196.16 105.26,170.00 143.84,143.84" fill="#0F172A"/>
+    <polygon points="237.03,102.97 159.37,159.37 133.22,206.78 180.63,180.63" fill="#38BDF8"/>
+    <circle cx="170.0" cy="170.0" r="18.7" fill="#FFFFFF" stroke="#2563EB" stroke-width="6.119999999999999"/>
+    <circle cx="170.0" cy="170.0" r="7.4799999999999995" fill="#2563EB"/>
+    </svg>
+    <text x="410" y="190" font-family="Manrope, Arial, sans-serif" font-weight="800" font-size="112" fill="#FFFFFF" letter-spacing="1">
+      ORIZZONTE<tspan fill="#38BDF8">360</tspan>
+    </text>
+    <line x1="415" y1="245" x2="515" y2="245" stroke="#38BDF8" stroke-width="6"/>
+    <text x="545" y="265" font-family="Inter, Arial, sans-serif" font-weight="600" font-size="38" fill="#CBD5E1" letter-spacing="5">La tua azienda. Vista a 360°.</text>
+    <line x1="1320" y1="245" x2="1480" y2="245" stroke="#38BDF8" stroke-width="6"/>
+    </svg>

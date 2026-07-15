@@ -1,0 +1,20 @@
+{
+  "package": "Orizzonte360 Customer Portal Pack 01",
+  "version": "1.0.0",
+  "mode": "demo-static",
+  "entrypoint": "index.html",
+  "features": [
+    "login demo",
+    "dashboard",
+    "licenses",
+    "downloads",
+    "releases",
+    "docs",
+    "academy",
+    "tickets",
+    "billing",
+    "notifications",
+    "profile"
+  ],
+  "next_pack": "Customer Portal Pack 02 - backend authentication and real customer data"
+}

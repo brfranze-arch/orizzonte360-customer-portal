@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Portale clienti Orizzonte360: licenze, download, release, documentazione, ticket e billing.">
+  <meta name="theme-color" content="#0F172A">
+  <title>Orizzonte360 Customer Portal</title>
+  <link rel="icon" href="favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/portal.css">
+</head>
+<body>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <section id="loginView" class="login-shell">
+    <div class="login-brand">
+      <img src="assets/logo-dark.svg" alt="Orizzonte360">
+      <div>
+        <span class="eyebrow">Customer Portal</span>
+        <h1>Tutto ciò che serve per usare, aggiornare e supportare Orizzonte360.</h1>
+        <p>Licenze, download, release, documentazione, academy, ticket e billing in un’unica area riservata.</p>
+      </div>
+      <div class="login-features">
+        <article><strong>Licenze</strong><span>Stato, scadenze e attivazioni</span></article>
+        <article><strong>Download</strong><span>Pacchetti e manuali</span></article>
+        <article><strong>Supporto</strong><span>Ticket e notifiche</span></article>
+      </div>
+    </div>
+
+    <div class="login-panel">
+      <form id="loginForm" class="panel-card">
+        <img class="login-icon" src="assets/icon.svg" alt="">
+        <h2>Accedi al portale</h2>
+        <p>Demo locale pronta per i test del PACK 01.</p>
+        <label>Email
+          <input id="loginEmail" type="email" value="demo@orizzonte360.it" required>
+        </label>
+        <label>Password
+          <input id="loginPassword" type="password" value="Demo123!" required>
+        </label>
+        <button class="btn btn-primary" type="submit">Accedi</button>
+        <button class="btn btn-secondary" type="button" id="fillDemo">Usa credenziali demo</button>
+        <small>Credenziali demo: demo@orizzonte360.it / Demo123!</small>
+      </form>
+    </div>
+  </section>
+
+  <div id="portalView" class="portal-shell hidden">
+    <aside class="sidebar">
+      <a class="sidebar-brand" href="#" data-page="dashboard"><img src="assets/logo-dark.svg" alt="Orizzonte360"></a>
+      <nav id="sidebarNav">
+        <button class="nav-item active" data-page="dashboard"><span>⌂</span>Dashboard</button>
+        <button class="nav-item" data-page="licenses"><span>◆</span>Licenze</button>
+        <button class="nav-item" data-page="downloads"><span>⇩</span>Download</button>
+        <button class="nav-item" data-page="releases"><span>↻</span>Release</button>
+        <button class="nav-item" data-page="docs"><span>▤</span>Documentazione</button>
+        <button class="nav-item" data-page="academy"><span>▶</span>Academy</button>
+        <button class="nav-item" data-page="tickets"><span>✉</span>Ticket</button>
+        <button class="nav-item" data-page="billing"><span>€</span>Billing</button>
+        <button class="nav-item" data-page="notifications"><span>●</span>Notifiche <em id="notificationCount">3</em></button>
+        <button class="nav-item" data-page="profile"><span>⚙</span>Profilo</button>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="openProduct" class="btn btn-outline">Apri Orizzonte360</button>
+        <button id="logoutBtn" class="btn btn-danger">Logout</button>
+      </div>
+    </aside>
+
+    <div class="portal-main">
+      <header class="topbar">
+        <button id="menuToggle" class="menu-toggle" aria-label="Apri menu">☰</button>
+        <div><span class="eyebrow">Area cliente</span><h1 id="pageTitle">Dashboard</h1></div>
+        <div class="topbar-actions">
+          <button id="quickSupport" class="icon-button" title="Supporto">?</button>
+          <button class="user-chip" data-page="profile">
+            <span class="avatar">BF</span>
+            <span><strong>Bruno Franze</strong><small>Professional</small></span>
+          </button>
+        </div>
+      </header>
+      <main id="content" class="content"></main>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="data/demo-data.js"></script>
+  <script src="js/portal.js"></script>
+</body>
+</html>
