@@ -6,7 +6,9 @@
   const state = {
     tickets: JSON.parse(localStorage.getItem("o360_tickets") || "null") || data.tickets,
     notifications: JSON.parse(localStorage.getItem("o360_notifications") || "null") || data.notifications,
-    page: "dashboard"
+    page: "dashboard",
+    token: localStorage.getItem("o360_portal_token") || "",
+    profile: null
   };
 
   const loginView = $("#loginView");
@@ -42,6 +44,31 @@
     if (["preparazione","pianificata","non disponibile"].some(v => s.includes(v))) return "status-warning";
     return "status-info";
   }
+  async function api(path, options={}) {
+    const headers = {...(options.headers || {})};
+    if (state.token) headers.Authorization = `Bearer ${state.token}`;
+    if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+    const response = await fetch(`${cfg.apiUrl}${path}`, {...options, headers});
+    let payload;
+    try { payload = await response.json(); } catch { payload = {error:"Risposta backend non valida"}; }
+    if (!response.ok && !payload.error) payload.error = `Errore HTTP ${response.status}`;
+    return payload;
+  }
+
+  async function loadRealProfile() {
+    const result = await api("/api/portal/profile");
+    if (result.error) throw new Error(result.error);
+    state.profile = result;
+    data.customer.name = result.name;
+    data.customer.initials = result.name.split(/\s+/).map(x=>x[0]).join("").slice(0,2).toUpperCase();
+    data.customer.email = result.email;
+    data.customer.company = result.company_name || "Azienda non impostata";
+    data.customer.role = result.job_title || result.role;
+    $$(".avatar").forEach(x=>x.textContent=data.customer.initials);
+    const chip=$(".user-chip span:last-child");
+    if(chip) chip.innerHTML=`<strong>${esc(result.name)}</strong><small>${esc(result.role)}</small>`;
+  }
+
   function unreadCount() {
     const n = state.notifications.filter(x => !x.read).length;
     $("#notificationCount").textContent = n;
@@ -239,22 +266,46 @@
     $$(".doc-action").forEach(b=>b.addEventListener("click",()=>toast(`${b.dataset.doc}: richiesta registrata`)));
     $$(".course-btn").forEach(b=>b.addEventListener("click",()=>toast(`Corso aperto in modalità demo`)));
     $$(".invoice-btn").forEach(b=>b.addEventListener("click",()=>downloadText(`${b.dataset.invoice}.txt`,`Fattura demo ${b.dataset.invoice}`)));
-    $("#profileForm")?.addEventListener("submit",e=>{e.preventDefault();toast("Profilo salvato localmente in modalità demo")});
-    $("#changePassword")?.addEventListener("click",()=>toast("Funzione prevista con autenticazione backend nel PACK 02"));
+    $("#profileForm")?.addEventListener("submit",async e=>{
+      e.preventDefault(); const f=new FormData(e.currentTarget);
+      const payload={name:f.get("name"),email:f.get("email"),company_name:f.get("company"),job_title:f.get("role"),phone:"",preferred_language:"it"};
+      const result=await api("/api/portal/profile",{method:"PUT",body:JSON.stringify(payload)});
+      if(result.error){toast(result.error);return;}
+      await loadRealProfile(); toast("Profilo aggiornato"); render("profile");
+    });
+    $("#changePassword")?.addEventListener("click",()=>{
+      const m=modal("Cambia password",`<form id="passwordForm" class="ticket-form"><label class="full">Password attuale<input type="password" name="current" required></label><label class="full">Nuova password<input type="password" name="next" minlength="8" required></label><label class="full">Conferma nuova password<input type="password" name="confirm" minlength="8" required></label><div class="full"><button class="btn btn-primary" type="submit">Aggiorna password</button></div></form>`);
+      $("#passwordForm",m).addEventListener("submit",async e=>{e.preventDefault();const f=new FormData(e.currentTarget);if(f.get("next")!==f.get("confirm")){toast("Le nuove password non coincidono");return;}const result=await api("/api/portal/change-password",{method:"POST",body:JSON.stringify({current_password:f.get("current"),new_password:f.get("next")})});if(result.error){toast(result.error);return;}state.token=result.token;localStorage.setItem("o360_portal_token",state.token);m.remove();toast("Password aggiornata");});
+    });
   }
 
-  function login() {
-    sessionStorage.setItem("o360_portal_session","demo");
-    loginView.classList.add("hidden"); portalView.classList.remove("hidden");
-    unreadCount(); render("dashboard");
+  async function openPortal() {
+    try {
+      await loadRealProfile();
+      loginView.classList.add("hidden"); portalView.classList.remove("hidden");
+      unreadCount(); render("dashboard");
+    } catch (error) {
+      state.token=""; localStorage.removeItem("o360_portal_token");
+      portalView.classList.add("hidden"); loginView.classList.remove("hidden");
+      toast(error.message || "Sessione non valida");
+    }
   }
-  $("#loginForm").addEventListener("submit",e=>{
+
+  $("#loginForm").addEventListener("submit",async e=>{
     e.preventDefault();
-    if($("#loginEmail").value==="demo@orizzonte360.it" && $("#loginPassword").value==="Demo123!") login();
-    else toast("Credenziali demo non valide");
+    const email=$("#loginEmail").value.trim();
+    const password=$("#loginPassword").value;
+    const query=new URLSearchParams({email,password});
+    const result=await api(`/api/auth/login?${query.toString()}`,{method:"POST"});
+    if(result.error){toast(result.error);return;}
+    state.token=result.token; localStorage.setItem("o360_portal_token",state.token);
+    await openPortal();
   });
-  $("#fillDemo").addEventListener("click",()=>{$("#loginEmail").value="demo@orizzonte360.it";$("#loginPassword").value="Demo123!"});
-  $("#logoutBtn").addEventListener("click",()=>{sessionStorage.removeItem("o360_portal_session");portalView.classList.add("hidden");loginView.classList.remove("hidden")});
+  $("#logoutBtn").addEventListener("click",async()=>{
+    try { await api("/api/portal/logout",{method:"POST"}); } catch {}
+    state.token=""; state.profile=null; localStorage.removeItem("o360_portal_token");
+    portalView.classList.add("hidden"); loginView.classList.remove("hidden");
+  });
   $("#menuToggle").addEventListener("click",()=>sidebar.classList.toggle("open"));
   $("#sidebarNav").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)render(b.dataset.page)});
   $(".sidebar-brand").addEventListener("click",e=>{e.preventDefault();render("dashboard")});
@@ -262,5 +313,5 @@
   $("#quickSupport").addEventListener("click",newTicketModal);
   $("#openProduct").addEventListener("click",()=>window.open(cfg.productUrl || "#","_blank","noopener"));
 
-  if(sessionStorage.getItem("o360_portal_session")==="demo") login();
+  if(state.token) openPortal();
 })();
