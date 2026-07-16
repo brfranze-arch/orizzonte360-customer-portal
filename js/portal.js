@@ -4,8 +4,9 @@
   const $ = (s, root=document) => root.querySelector(s);
   const $$ = (s, root=document) => [...root.querySelectorAll(s)];
   const state = {
-    tickets: JSON.parse(localStorage.getItem("o360_tickets") || "null") || data.tickets,
-    notifications: JSON.parse(localStorage.getItem("o360_notifications") || "null") || data.notifications,
+    tickets: [],
+    notifications: [],
+    ticketMeta: null,
     page: "dashboard",
     token: localStorage.getItem("o360_portal_token") || "",
     profile: null,
@@ -30,10 +31,7 @@
     node.classList.add("show");
     setTimeout(() => node.classList.remove("show"), 2600);
   }
-  function save() {
-    localStorage.setItem("o360_tickets", JSON.stringify(state.tickets));
-    localStorage.setItem("o360_notifications", JSON.stringify(state.notifications));
-  }
+
   function downloadText(filename, text, type="text/plain") {
     const blob = new Blob([text], {type});
     const url = URL.createObjectURL(blob);
@@ -123,6 +121,18 @@
     };
   }
 
+
+  async function loadSupportData() {
+    const [tickets, notifications, meta] = await Promise.all([
+      api("/api/portal/tickets"), api("/api/portal/notifications"), api("/api/portal/tickets/meta")
+    ]);
+    if (tickets.error) throw new Error(tickets.error);
+    if (notifications.error) throw new Error(notifications.error);
+    state.tickets = Array.isArray(tickets) ? tickets : [];
+    state.notifications = Array.isArray(notifications) ? notifications : [];
+    state.ticketMeta = meta.error ? null : meta;
+  }
+
   function unreadCount() {
     const n = state.notifications.filter(x => !x.read).length;
     $("#notificationCount").textContent = n;
@@ -150,7 +160,7 @@
         <article class="card kpi"><span class="kpi-label">Piano</span><div class="kpi-value">${esc(c.plan)}</div><span class="kpi-meta">Licenza attiva</span></article>
         <article class="card kpi"><span class="kpi-label">Versione</span><div class="kpi-value">1.0.0</div><span class="kpi-meta">RC1 disponibile</span></article>
         <article class="card kpi"><span class="kpi-label">Postazioni</span><div class="kpi-value">${lic.usedSeats}/${lic.seats}</div><span class="kpi-meta">3 disponibili</span></article>
-        <article class="card kpi"><span class="kpi-label">Ticket aperti</span><div class="kpi-value">${state.tickets.filter(t=>t.status==="Aperto").length}</div><span class="kpi-meta">Supporto operativo</span></article>
+        <article class="card kpi"><span class="kpi-label">Ticket aperti</span><div class="kpi-value">${state.tickets.filter(t=>!["RISOLTO","CHIUSO"].includes(t.status)).length}</div><span class="kpi-meta">Supporto operativo</span></article>
       </div>
       <div class="grid two-col" style="margin-top:18px">
         <section class="card">
@@ -239,10 +249,10 @@
       <div class="item-grid">${data.academy.map((a,i)=>`<article class="resource-card"><div class="resource-meta"><span>${esc(a.level)}</span><span>${esc(a.duration)}</span></div><h3>${esc(a.title)}</h3><p>Avanzamento corso</p><div class="progress"><span style="width:${a.progress}%"></span></div><span class="kpi-label">${a.progress}% completato</span><button class="btn btn-secondary btn-small course-btn" data-course="${i}">${a.progress===100?"Rivedi":a.progress>0?"Continua":"Inizia"}</button></article>`).join("")}</div>`;
     },
     tickets() {
-      return pageHead("Supporto e Ticket","Apri richieste tecniche, commerciali o di miglioramento.",
+      return pageHead("Supporto e Ticket","Richieste reali collegate al backend Orizzonte360.",
         `<button class="btn btn-primary" id="newTicket">Nuovo ticket</button>`) + `
       <section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>ID</th><th>Oggetto</th><th>Categoria</th><th>Priorità</th><th>Stato</th><th>Aggiornato</th></tr></thead><tbody>
-        ${state.tickets.map(t=>`<tr><td><strong>${esc(t.id)}</strong></td><td>${esc(t.subject)}</td><td>${esc(t.category)}</td><td>${esc(t.priority)}</td><td><span class="status ${statusClass(t.status)}">${esc(t.status)}</span></td><td>${esc(t.updated)}</td></tr>`).join("")}
+        ${state.tickets.length ? state.tickets.map(t=>`<tr class="ticket-row" data-ticket-id="${t.id}"><td><strong>${esc(t.code)}</strong></td><td>${esc(t.subject)}</td><td>${esc(t.category)}</td><td>${esc(t.priority)}</td><td><span class="status ${statusClass(t.status)}">${esc(t.status)}</span></td><td>${fmtDate(t.updated_at)}</td></tr>`).join("") : `<tr><td colspan="6">Nessun ticket presente.</td></tr>`}
       </tbody></table></div></section>`;
     },
     billing() {
@@ -261,7 +271,7 @@
     notifications() {
       return pageHead("Notifiche","Release, documentazione, billing e supporto.",
         `<button class="btn btn-secondary" id="markAllRead">Segna tutte come lette</button>`) + `
-      <section class="card"><div class="notification-list">${state.notifications.length ? state.notifications.map(n=>`<article class="notification ${n.read?"":"unread"}"><span class="notification-icon">${n.type==="release"?"↻":n.type==="billing"?"€":"▤"}</span><div><strong>${esc(n.title)}</strong><p>${esc(n.message)}</p><small>${esc(n.date)}</small></div><button class="btn btn-secondary btn-small read-notification" data-id="${n.id}">${n.read?"Letta":"Segna letta"}</button></article>`).join("") : `<div class="empty">Nessuna notifica.</div>`}</div></section>`;
+      <section class="card"><div class="notification-list">${state.notifications.length ? state.notifications.map(n=>`<article class="notification ${n.read?"":"unread"}"><span class="notification-icon">${n.type==="release"?"↻":n.type==="billing"?"€":"▤"}</span><div><strong>${esc(n.title)}</strong><p>${esc(n.message)}</p><small>${fmtDate(n.created_at)}</small></div><button class="btn btn-secondary btn-small read-notification" data-id="${n.id}">${n.read?"Letta":"Segna letta"}</button></article>`).join("") : `<div class="empty">Nessuna notifica.</div>`}</div></section>`;
     },
     profile() {
       const c=data.customer;
@@ -296,19 +306,20 @@
     return wrap;
   }
 
+  function ticketDetailModal(ticket) {
+    const comments=(ticket.comments||[]).map(c=>`<article class="notification"><div><strong>${esc(c.author_name)}</strong><p>${esc(c.body)}</p><small>${fmtDate(c.created_at)}</small></div></article>`).join("") || '<div class="empty">Nessun commento.</div>';
+    const attachments=(ticket.attachments||[]).map(a=>`<button class="btn btn-secondary btn-small attachment-download" data-url="${esc(a.download_url)}">${esc(a.original_name)}</button>`).join(' ') || 'Nessun allegato';
+    const m=modal(`${esc(ticket.code)} · ${esc(ticket.subject)}`,`<p>${esc(ticket.description)}</p><p><span class="status ${statusClass(ticket.status)}">${esc(ticket.status)}</span> · ${esc(ticket.priority)} · ${esc(ticket.category)}</p><h4>Allegati</h4><div>${attachments}</div><h4>Cronologia commenti</h4><div class="notification-list">${comments}</div><form id="commentForm" class="ticket-form"><label class="full">Nuovo commento<textarea name="body" rows="4" required></textarea></label><label class="full">Allegato facoltativo<input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,.zip"></label><div class="full"><button class="btn btn-primary">Invia aggiornamento</button> <button type="button" class="btn btn-secondary" id="closeTicket">Chiudi ticket</button></div></form>`);
+    $$('.attachment-download',m).forEach(b=>b.addEventListener('click',async()=>{const response=await fetch(`${cfg.apiUrl}${b.dataset.url}`,{headers:{Authorization:`Bearer ${state.token}`}});if(!response.ok){toast('Download non disponibile');return;}const blob=await response.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='allegato';a.click();URL.revokeObjectURL(url);}));
+    $('#commentForm',m).addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);let result=await api(`/api/portal/tickets/${ticket.id}/comments`,{method:'POST',body:JSON.stringify({body:f.get('body')})});if(result.error){toast(result.error);return;}const file=f.get('file');if(file&&file.size){const fd=new FormData();fd.append('file',file);result=await api(`/api/portal/tickets/${ticket.id}/attachments`,{method:'POST',body:fd});if(result.error){toast(result.error);return;}}await loadSupportData();m.remove();toast('Ticket aggiornato');render('tickets');});
+    $('#closeTicket',m).addEventListener('click',async()=>{const result=await api(`/api/portal/tickets/${ticket.id}`,{method:'PATCH',body:JSON.stringify({status:'CHIUSO'})});if(result.error){toast(result.error);return;}await loadSupportData();m.remove();toast('Ticket chiuso');render('tickets');});
+  }
+
   function newTicketModal() {
-    const m=modal("Nuovo ticket",`<form id="ticketForm" class="ticket-form">
-      <label>Categoria<select name="category"><option>Supporto</option><option>Bug</option><option>Commerciale</option><option>Feature Request</option></select></label>
-      <label>Priorità<select name="priority"><option>Bassa</option><option selected>Media</option><option>Alta</option></select></label>
-      <label class="full">Oggetto<input name="subject" required></label>
-      <label class="full">Descrizione<textarea name="description" rows="5" required></textarea></label>
-      <div class="full"><button class="btn btn-primary" type="submit">Invia ticket</button></div>
-    </form>`);
-    $("#ticketForm",m).addEventListener("submit",e=>{
-      e.preventDefault(); const f=new FormData(e.currentTarget);
-      state.tickets.unshift({id:`TCK-${1043+state.tickets.length}`,subject:f.get("subject"),category:f.get("category"),priority:f.get("priority"),status:"Aperto",updated:new Date().toLocaleDateString("it-IT")});
-      save(); m.remove(); toast("Ticket creato in modalità demo"); render("tickets");
-    });
+    const categories=state.ticketMeta?.categories||['SUPPORTO','BUG','COMMERCIALE','FEATURE_REQUEST'];
+    const priorities=state.ticketMeta?.priorities||['BASSA','MEDIA','ALTA','CRITICA'];
+    const m=modal("Nuovo ticket",`<form id="ticketForm" class="ticket-form"><label>Categoria<select name="category">${categories.map(x=>`<option>${x}</option>`).join('')}</select></label><label>Priorità<select name="priority">${priorities.map(x=>`<option ${x==='MEDIA'?'selected':''}>${x}</option>`).join('')}</select></label><label class="full">Oggetto<input name="subject" minlength="3" required></label><label class="full">Descrizione<textarea name="description" rows="5" minlength="5" required></textarea></label><label class="full">Allegato facoltativo<input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,.zip"></label><div class="full"><button class="btn btn-primary" type="submit">Invia ticket</button></div></form>`);
+    $("#ticketForm",m).addEventListener("submit",async e=>{e.preventDefault();const f=new FormData(e.currentTarget);let result=await api('/api/portal/tickets',{method:'POST',body:JSON.stringify({subject:f.get('subject'),description:f.get('description'),category:f.get('category'),priority:f.get('priority')})});if(result.error){toast(result.error);return;}const file=f.get('file');if(file&&file.size){const fd=new FormData();fd.append('file',file);const upload=await api(`/api/portal/tickets/${result.ticket.id}/attachments`,{method:'POST',body:fd});if(upload.error){toast(`Ticket creato, allegato non caricato: ${upload.error}`);}}await loadSupportData();m.remove();toast('Ticket creato');render('tickets');});
   }
 
   function bindDynamic() {
@@ -323,9 +334,10 @@
     $('#loadDownloadHistory')?.addEventListener('click',async()=>{const rows=await api('/api/portal/downloads/history');const target=$('#downloadHistory');if(rows.error){target.innerHTML=`<p>${esc(rows.error)}</p>`;return;}target.innerHTML=`<div class="table-wrap"><table class="data-table"><thead><tr><th>File</th><th>Data</th></tr></thead><tbody>${rows.length?rows.map(x=>`<tr><td>${esc(x.file_name)}</td><td>${fmtDate(x.downloaded_at)}</td></tr>`).join(''):`<tr><td colspan="2">Nessun download.</td></tr>`}</tbody></table></div>`;});
     $$('.release-notes-btn').forEach(b=>b.addEventListener('click',async()=>{const response=await fetch(`${cfg.apiUrl}/api/portal/releases/${b.dataset.id}/notes`,{headers:{Authorization:`Bearer ${state.token}`}});if(!response.ok){toast('Impossibile aprire le note');return;}const text=await response.text();downloadText(`release-notes-${b.dataset.id}.txt`,text);}));
     $('#newTicket')?.addEventListener('click',newTicketModal);
+    $$('.ticket-row').forEach(r=>r.addEventListener('click',()=>{const t=state.tickets.find(x=>x.id===Number(r.dataset.ticketId));if(t)ticketDetailModal(t);}));
     $('#openBilling')?.addEventListener('click',()=>toast('Collegamento Stripe Customer Portal previsto nel PACK 02D'));
-    $('#markAllRead')?.addEventListener('click',()=>{state.notifications.forEach(n=>n.read=true);save();unreadCount();render('notifications')});
-    $$('.read-notification').forEach(b=>b.addEventListener('click',()=>{const n=state.notifications.find(x=>x.id===Number(b.dataset.id));if(n)n.read=true;save();unreadCount();render('notifications')}));
+    $('#markAllRead')?.addEventListener('click',async()=>{await api('/api/portal/notifications/read-all',{method:'POST'});await loadSupportData();unreadCount();render('notifications')});
+    $$('.read-notification').forEach(b=>b.addEventListener('click',async()=>{await api(`/api/portal/notifications/${b.dataset.id}/read`,{method:'POST'});await loadSupportData();unreadCount();render('notifications')}));
     $$('.filter-btn').forEach(b=>b.addEventListener('click',()=>{$$('.filter-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');$$('[data-type]').forEach(c=>c.style.display=b.dataset.filter==='Tutti'||c.dataset.type===b.dataset.filter?'':'none')}));
     $$('.doc-action').forEach(b=>b.addEventListener('click',()=>toast(`${b.dataset.doc}: richiesta registrata`)));
     $$('.course-btn').forEach(b=>b.addEventListener('click',()=>toast('Corso aperto in modalità demo')));
@@ -347,6 +359,7 @@
     try {
       await loadRealProfile();
       await loadPortalCommerceData();
+      await loadSupportData();
       loginView.classList.add("hidden"); portalView.classList.remove("hidden");
       unreadCount(); render("dashboard");
     } catch (error) {
