@@ -8,7 +8,11 @@
     notifications: JSON.parse(localStorage.getItem("o360_notifications") || "null") || data.notifications,
     page: "dashboard",
     token: localStorage.getItem("o360_portal_token") || "",
-    profile: null
+    profile: null,
+    license: null,
+    downloads: [],
+    releases: [],
+    activations: []
   };
 
   const loginView = $("#loginView");
@@ -67,6 +71,56 @@
     $$(".avatar").forEach(x=>x.textContent=data.customer.initials);
     const chip=$(".user-chip span:last-child");
     if(chip) chip.innerHTML=`<strong>${esc(result.name)}</strong><small>${esc(result.role)}</small>`;
+  }
+
+  function fmtDate(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("it-IT");
+  }
+  function fmtBytes(value) {
+    const bytes = Number(value || 0);
+    if (!bytes) return "—";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  function deviceFingerprint() {
+    let value = localStorage.getItem("o360_device_fingerprint");
+    if (!value) {
+      value = `${navigator.platform}-${navigator.language}-${screen.width}x${screen.height}-${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
+      localStorage.setItem("o360_device_fingerprint", value);
+    }
+    return value;
+  }
+  async function loadPortalCommerceData() {
+    const [license, downloads, releases, activations] = await Promise.all([
+      api("/api/portal/license"),
+      api("/api/portal/downloads"),
+      api("/api/portal/releases"),
+      api("/api/portal/license/activations")
+    ]);
+    if (license.error) throw new Error(license.error);
+    if (downloads.error) throw new Error(downloads.error);
+    if (releases.error) throw new Error(releases.error);
+    state.license = license;
+    state.downloads = Array.isArray(downloads) ? downloads : [];
+    state.releases = Array.isArray(releases) ? releases : [];
+    state.activations = Array.isArray(activations) ? activations : [];
+    data.customer.plan = license.plan || data.customer.plan;
+    data.license = {
+      code: license.license_key,
+      status: license.status,
+      edition: license.edition,
+      seats: license.max_seats,
+      usedSeats: license.used_seats,
+      companies: license.max_companies,
+      usedCompanies: license.used_companies,
+      renewal: fmtDate(license.expires_at),
+      activatedAt: fmtDate(license.starts_at),
+      environment: license.edition,
+      currentVersion: license.current_version
+    };
   }
 
   function unreadCount() {
@@ -129,48 +183,52 @@
       </div>`;
     },
     licenses() {
-      const l=data.license;
-      return pageHead("Licenze","Stato, utilizzo e informazioni della licenza Orizzonte360.",
+      const l = state.license || {};
+      const usedSeats = Number(l.used_seats || 0), maxSeats = Number(l.max_seats || 1);
+      const usedCompanies = Number(l.used_companies || 0), maxCompanies = Number(l.max_companies || 1);
+      return pageHead("Licenze","Stato reale, limiti e dispositivi autorizzati.",
         `<button class="btn btn-secondary" id="exportLicense">Esporta licenza</button>`) + `
       <div class="grid two-col">
         <section class="card">
           <h3>Licenza principale</h3>
-          <p><span class="status status-active">${esc(l.status)}</span></p>
+          <p><span class="status ${statusClass(l.status || "active")}">${esc(l.status || "active")}</span></p>
           <table class="data-table"><tbody>
-            <tr><th>Codice</th><td><strong>${esc(l.code)}</strong></td></tr>
-            <tr><th>Edizione</th><td>${esc(l.edition)}</td></tr>
-            <tr><th>Ambiente</th><td>${esc(l.environment)}</td></tr>
-            <tr><th>Attivata</th><td>${esc(l.activatedAt)}</td></tr>
-            <tr><th>Rinnovo</th><td>${esc(l.renewal)}</td></tr>
+            <tr><th>Codice</th><td><strong>${esc(l.license_key || "—")}</strong></td></tr>
+            <tr><th>Piano</th><td>${esc(l.plan || "FREE")}</td></tr>
+            <tr><th>Edizione</th><td>${esc(l.edition || "SAAS_CLOUD")}</td></tr>
+            <tr><th>Versione</th><td>${esc(l.current_version || "—")}</td></tr>
+            <tr><th>Attivata</th><td>${fmtDate(l.starts_at)}</td></tr>
+            <tr><th>Scadenza / rinnovo</th><td>${fmtDate(l.expires_at)}</td></tr>
           </tbody></table>
         </section>
         <section class="card">
-          <h3>Limiti inclusi</h3>
-          <p><strong>Postazioni: ${l.usedSeats}/${l.seats}</strong></p><div class="progress"><span style="width:${l.usedSeats/l.seats*100}%"></span></div>
-          <p><strong>Aziende: ${l.usedCompanies}/${l.companies}</strong></p><div class="progress"><span style="width:${l.usedCompanies/l.companies*100}%"></span></div>
-          <p class="notice">L’aumento di utenti o aziende richiede un aggiornamento del piano.</p>
+          <h3>Utilizzo</h3>
+          <p><strong>Postazioni: ${usedSeats}/${maxSeats}</strong></p><div class="progress"><span style="width:${Math.min(100,usedSeats/maxSeats*100)}%"></span></div>
+          <p><strong>Aziende: ${usedCompanies}/${maxCompanies}</strong></p><div class="progress"><span style="width:${Math.min(100,usedCompanies/maxCompanies*100)}%"></span></div>
+          <p class="notice">I limiti sono sincronizzati con il piano Billing reale.</p>
+          <button class="btn btn-primary btn-small" id="activateThisDevice">Attiva questo dispositivo</button>
         </section>
       </div>
-      <section class="card" style="margin-top:18px"><h3>Edizioni disponibili</h3>
-        <div class="item-grid">
-          ${["SaaS Cloud","Enterprise On-Premise","Docker Appliance"].map((x,i)=>`<article class="resource-card"><span class="status ${i===0?"status-active":"status-warning"}">${i===0?"Attiva":"Su richiesta"}</span><h3>${x}</h3><p>${i===0?"Accesso online, aggiornamenti centralizzati e billing ricorrente.":i===1?"Installazione dedicata nell’infrastruttura del cliente.":"Pacchetto containerizzato per installazione rapida."}</p><button class="btn btn-secondary btn-small" data-page="${i===0?"billing":"tickets"}">${i===0?"Gestisci piano":"Richiedi informazioni"}</button></article>`).join("")}
-        </div>
+      <section class="card" style="margin-top:18px"><h3>Dispositivi e postazioni</h3>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>Dispositivo</th><th>Fingerprint</th><th>Attivato</th><th>Ultimo accesso</th><th>Stato</th><th></th></tr></thead><tbody>
+        ${state.activations.length ? state.activations.map(a=>`<tr><td><strong>${esc(a.device_name)}</strong></td><td>${esc(String(a.device_fingerprint).slice(0,22))}…</td><td>${fmtDate(a.activated_at)}</td><td>${fmtDate(a.last_seen_at)}</td><td><span class="status ${a.active?"status-active":"status-closed"}">${a.active?"Attivo":"Disattivato"}</span></td><td>${a.active?`<button class="btn btn-secondary btn-small deactivate-device" data-id="${a.id}">Disattiva</button>`:""}</td></tr>`).join(""):`<tr><td colspan="6">Nessun dispositivo attivato.</td></tr>`}
+        </tbody></table></div>
       </section>`;
     },
     downloads() {
-      return pageHead("Download Center","Pacchetti, dataset, documentazione e build disponibili.") + `
-      <div class="filters"><button class="filter-btn active" data-filter="Tutti">Tutti</button>${["Manuale","Commerciale","Dataset","Software"].map(x=>`<button class="filter-btn" data-filter="${x}">${x}</button>`).join("")}</div>
+      const categories=[...new Set(state.downloads.map(d=>d.category))];
+      return pageHead("Download Center","Risorse reali protette da licenza e token temporaneo.") + `
+      <div class="filters"><button class="filter-btn active" data-filter="Tutti">Tutti</button>${categories.map(x=>`<button class="filter-btn" data-filter="${esc(x)}">${esc(x)}</button>`).join("")}</div>
       <div id="downloadGrid" class="item-grid">
-        ${data.downloads.map(d=>`<article class="resource-card" data-type="${d.type}"><div class="resource-meta"><span>${esc(d.type)}</span><span>${esc(d.format)}</span></div><h3>${esc(d.title)}</h3><p>Edizione: ${esc(d.edition)} · Dimensione: ${esc(d.size)}</p><button class="btn ${d.available?"btn-primary":"btn-secondary"} btn-small download-btn" data-download="${d.id}" ${d.available?"":"disabled"}>${d.available?"Scarica":"Non disponibile"}</button></article>`).join("")}
-      </div>`;
+        ${state.downloads.length ? state.downloads.map(d=>`<article class="resource-card" data-type="${esc(d.category)}"><div class="resource-meta"><span>${esc(d.category)}</span><span>${esc(d.version)}</span></div><h3>${esc(d.title)}</h3><p>${esc(d.description)}</p><div class="resource-meta"><span>${fmtBytes(d.size_bytes)}</span><span>Piano minimo: ${esc(d.min_plan)}</span></div><small>SHA-256: ${esc(String(d.checksum_sha256 || "").slice(0,18))}…</small><button class="btn ${d.entitled?"btn-primary":"btn-secondary"} btn-small secure-download" data-id="${d.id}" ${d.entitled?"":"disabled"}>${d.entitled?"Scarica in modo sicuro":"Non incluso nel piano"}</button></article>`).join(""):`<div class="empty">Nessuna risorsa disponibile.</div>`}
+      </div>
+      <section class="card" style="margin-top:18px"><h3>Come funziona la protezione</h3><p class="notice">Ogni download genera un token monouso valido 5 minuti. Il backend verifica utente, piano, edizione e disponibilità del file.</p><button class="btn btn-secondary btn-small" id="loadDownloadHistory">Storico download</button><div id="downloadHistory"></div></section>`;
     },
     releases() {
-      return pageHead("Release Center","Versioni, canali, novità e note di rilascio.",
-        `<button class="btn btn-secondary" id="exportReleaseNotes">Esporta release notes</button>`) + `
-      <section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>Versione</th><th>Data</th><th>Canale</th><th>Stato</th><th>Novità</th></tr></thead><tbody>
-        ${data.releases.map(r=>`<tr><td><strong>${esc(r.version)}</strong></td><td>${esc(r.date)}</td><td>${esc(r.channel)}</td><td><span class="status ${statusClass(r.status)}">${esc(r.status)}</span></td><td>${esc(r.summary)}</td></tr>`).join("")}
-      </tbody></table></div></section>
-      <section class="card danger-notice" style="margin-top:18px"><strong>Nota per le edizioni installabili</strong><p>Gli aggiornamenti On-Premise, Docker e White Label saranno resi disponibili nei pacchetti di distribuzione dedicati.</p></section>`;
+      return pageHead("Release Center","Versioni e changelog letti dal backend.") + `
+      <section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>Versione</th><th>Pubblicata</th><th>Canale</th><th>Stato</th><th>Novità</th><th></th></tr></thead><tbody>
+        ${state.releases.length ? state.releases.map(r=>`<tr><td><strong>${esc(r.version)}</strong><br><small>${esc(r.title)}</small></td><td>${fmtDate(r.published_at)}</td><td>${esc(r.channel)}</td><td><span class="status ${statusClass(r.status)}">${esc(r.status)}</span></td><td>${esc(r.summary)}</td><td><button class="btn btn-secondary btn-small release-notes-btn" data-id="${r.id}">Note</button></td></tr>`).join(""):`<tr><td colspan="6">Nessuna release disponibile.</td></tr>`}
+      </tbody></table></div></section>`;
     },
     docs() {
       return pageHead("Documentazione","Manuali operativi, tecnici e commerciali.") + `
@@ -217,7 +275,7 @@
         <label class="full">Workspace<input value="${esc(c.tenant)}" disabled></label>
         <div class="full"><button class="btn btn-primary" type="submit">Salva profilo</button></div>
       </form></div></section>
-      <section class="card" style="margin-top:18px"><h3>Sicurezza</h3><p class="notice">Autenticazione reale, cambio password e 2FA verranno collegati al backend nel Customer Portal Pack 02.</p><button class="btn btn-secondary" id="changePassword">Richiedi cambio password</button></section>`;
+      <section class="card" style="margin-top:18px"><h3>Sicurezza</h3><p class="notice">Autenticazione e cambio password sono collegati al backend. La 2FA sarà introdotta in un pacchetto successivo.</p><button class="btn btn-secondary" id="changePassword">Richiedi cambio password</button></section>`;
     }
   };
 
@@ -254,34 +312,41 @@
   }
 
   function bindDynamic() {
-    $$("[data-page]", content).forEach(x=>x.addEventListener("click",()=>render(x.dataset.page)));
-    $("#exportLicense")?.addEventListener("click",()=>downloadText("orizzonte360-licenza.json",JSON.stringify(data.license,null,2),"application/json"));
-    $("#exportReleaseNotes")?.addEventListener("click",()=>downloadText("orizzonte360-release-notes.txt",data.releases.map(r=>`${r.version} - ${r.date}\n${r.summary}\n`).join("\n")));
-    $("#newTicket")?.addEventListener("click",newTicketModal);
-    $("#openBilling")?.addEventListener("click",()=>toast("Collegamento Stripe Customer Portal previsto nel PACK 02"));
-    $("#markAllRead")?.addEventListener("click",()=>{state.notifications.forEach(n=>n.read=true);save();unreadCount();render("notifications")});
-    $$(".read-notification").forEach(b=>b.addEventListener("click",()=>{const n=state.notifications.find(x=>x.id===Number(b.dataset.id));if(n)n.read=true;save();unreadCount();render("notifications")}));
-    $$(".filter-btn").forEach(b=>b.addEventListener("click",()=>{$$(".filter-btn").forEach(x=>x.classList.remove("active"));b.classList.add("active");$$("[data-type]").forEach(c=>c.style.display=b.dataset.filter==="Tutti"||c.dataset.type===b.dataset.filter?"":"none")}));
-    $$(".download-btn").forEach(b=>b.addEventListener("click",()=>{const d=data.downloads.find(x=>x.id===b.dataset.download);if(!d)return;if(d.id==="dataset") downloadText("Orizzonte360_Dataset_Demo_README.txt","Il dataset reale è fornito separatamente nel pacchetto documentazione."); else downloadText(`${d.title.replace(/\s+/g,"_")}.txt`,`Placeholder download demo per: ${d.title}\nIl file reale verrà collegato nel PACK 02.`);toast("Download demo generato")}));
-    $$(".doc-action").forEach(b=>b.addEventListener("click",()=>toast(`${b.dataset.doc}: richiesta registrata`)));
-    $$(".course-btn").forEach(b=>b.addEventListener("click",()=>toast(`Corso aperto in modalità demo`)));
-    $$(".invoice-btn").forEach(b=>b.addEventListener("click",()=>downloadText(`${b.dataset.invoice}.txt`,`Fattura demo ${b.dataset.invoice}`)));
-    $("#profileForm")?.addEventListener("submit",async e=>{
-      e.preventDefault(); const f=new FormData(e.currentTarget);
-      const payload={name:f.get("name"),email:f.get("email"),company_name:f.get("company"),job_title:f.get("role"),phone:"",preferred_language:"it"};
-      const result=await api("/api/portal/profile",{method:"PUT",body:JSON.stringify(payload)});
-      if(result.error){toast(result.error);return;}
-      await loadRealProfile(); toast("Profilo aggiornato"); render("profile");
+    $$('[data-page]', content).forEach(x=>x.addEventListener('click',()=>render(x.dataset.page)));
+    $('#exportLicense')?.addEventListener('click',()=>downloadText('orizzonte360-licenza.json',JSON.stringify(state.license,null,2),'application/json'));
+    $('#activateThisDevice')?.addEventListener('click', async()=>{
+      const result=await api('/api/portal/license/activate',{method:'POST',body:JSON.stringify({device_name:navigator.userAgent.includes('Mobile')?'Browser mobile':'Browser desktop',device_fingerprint:deviceFingerprint()})});
+      if(result.error){toast(result.error);return;} toast(result.message); await loadPortalCommerceData(); render('licenses');
     });
-    $("#changePassword")?.addEventListener("click",()=>{
-      const m=modal("Cambia password",`<form id="passwordForm" class="ticket-form"><label class="full">Password attuale<input type="password" name="current" required></label><label class="full">Nuova password<input type="password" name="next" minlength="8" required></label><label class="full">Conferma nuova password<input type="password" name="confirm" minlength="8" required></label><div class="full"><button class="btn btn-primary" type="submit">Aggiorna password</button></div></form>`);
-      $("#passwordForm",m).addEventListener("submit",async e=>{e.preventDefault();const f=new FormData(e.currentTarget);if(f.get("next")!==f.get("confirm")){toast("Le nuove password non coincidono");return;}const result=await api("/api/portal/change-password",{method:"POST",body:JSON.stringify({current_password:f.get("current"),new_password:f.get("next")})});if(result.error){toast(result.error);return;}state.token=result.token;localStorage.setItem("o360_portal_token",state.token);m.remove();toast("Password aggiornata");});
+    $$('.deactivate-device').forEach(b=>b.addEventListener('click',async()=>{const result=await api(`/api/portal/license/activations/${b.dataset.id}`,{method:'DELETE'});if(result.error){toast(result.error);return;}toast(result.message);await loadPortalCommerceData();render('licenses');}));
+    $$('.secure-download').forEach(b=>b.addEventListener('click',async()=>{const result=await api(`/api/portal/downloads/${b.dataset.id}/token`,{method:'POST'});if(result.error){toast(result.error);return;}window.location.href=`${cfg.apiUrl}${result.download_url}`;}));
+    $('#loadDownloadHistory')?.addEventListener('click',async()=>{const rows=await api('/api/portal/downloads/history');const target=$('#downloadHistory');if(rows.error){target.innerHTML=`<p>${esc(rows.error)}</p>`;return;}target.innerHTML=`<div class="table-wrap"><table class="data-table"><thead><tr><th>File</th><th>Data</th></tr></thead><tbody>${rows.length?rows.map(x=>`<tr><td>${esc(x.file_name)}</td><td>${fmtDate(x.downloaded_at)}</td></tr>`).join(''):`<tr><td colspan="2">Nessun download.</td></tr>`}</tbody></table></div>`;});
+    $$('.release-notes-btn').forEach(b=>b.addEventListener('click',async()=>{const response=await fetch(`${cfg.apiUrl}/api/portal/releases/${b.dataset.id}/notes`,{headers:{Authorization:`Bearer ${state.token}`}});if(!response.ok){toast('Impossibile aprire le note');return;}const text=await response.text();downloadText(`release-notes-${b.dataset.id}.txt`,text);}));
+    $('#newTicket')?.addEventListener('click',newTicketModal);
+    $('#openBilling')?.addEventListener('click',()=>toast('Collegamento Stripe Customer Portal previsto nel PACK 02D'));
+    $('#markAllRead')?.addEventListener('click',()=>{state.notifications.forEach(n=>n.read=true);save();unreadCount();render('notifications')});
+    $$('.read-notification').forEach(b=>b.addEventListener('click',()=>{const n=state.notifications.find(x=>x.id===Number(b.dataset.id));if(n)n.read=true;save();unreadCount();render('notifications')}));
+    $$('.filter-btn').forEach(b=>b.addEventListener('click',()=>{$$('.filter-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');$$('[data-type]').forEach(c=>c.style.display=b.dataset.filter==='Tutti'||c.dataset.type===b.dataset.filter?'':'none')}));
+    $$('.doc-action').forEach(b=>b.addEventListener('click',()=>toast(`${b.dataset.doc}: richiesta registrata`)));
+    $$('.course-btn').forEach(b=>b.addEventListener('click',()=>toast('Corso aperto in modalità demo')));
+    $$('.invoice-btn').forEach(b=>b.addEventListener('click',()=>downloadText(`${b.dataset.invoice}.txt`,`Fattura demo ${b.dataset.invoice}`)));
+    $('#profileForm')?.addEventListener('submit',async e=>{
+      e.preventDefault(); const f=new FormData(e.currentTarget);
+      const payload={name:f.get('name'),email:f.get('email'),company_name:f.get('company'),job_title:f.get('role'),phone:'',preferred_language:'it'};
+      const result=await api('/api/portal/profile',{method:'PUT',body:JSON.stringify(payload)});
+      if(result.error){toast(result.error);return;}
+      await loadRealProfile(); toast('Profilo aggiornato'); render('profile');
+    });
+    $('#changePassword')?.addEventListener('click',()=>{
+      const m=modal('Cambia password',`<form id="passwordForm" class="ticket-form"><label class="full">Password attuale<input type="password" name="current" required></label><label class="full">Nuova password<input type="password" name="next" minlength="8" required></label><label class="full">Conferma nuova password<input type="password" name="confirm" minlength="8" required></label><div class="full"><button class="btn btn-primary" type="submit">Aggiorna password</button></div></form>`);
+      $('#passwordForm',m).addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);if(f.get('next')!==f.get('confirm')){toast('Le nuove password non coincidono');return;}const result=await api('/api/portal/change-password',{method:'POST',body:JSON.stringify({current_password:f.get('current'),new_password:f.get('next')})});if(result.error){toast(result.error);return;}state.token=result.token;localStorage.setItem('o360_portal_token',state.token);m.remove();toast('Password aggiornata');});
     });
   }
 
   async function openPortal() {
     try {
       await loadRealProfile();
+      await loadPortalCommerceData();
       loginView.classList.add("hidden"); portalView.classList.remove("hidden");
       unreadCount(); render("dashboard");
     } catch (error) {
