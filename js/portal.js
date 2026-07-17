@@ -13,7 +13,9 @@
     license: null,
     downloads: [],
     releases: [],
-    activations: []
+    activations: [],
+    billing: null,
+    invoices: []
   };
 
   const loginView = $("#loginView");
@@ -53,7 +55,7 @@
     const response = await fetch(`${cfg.apiUrl}${path}`, {...options, headers});
     let payload;
     try { payload = await response.json(); } catch { payload = {error:"Risposta backend non valida"}; }
-    if (!response.ok && !payload.error) payload.error = `Errore HTTP ${response.status}`;
+    if (!response.ok && !payload.error) payload.error = payload.detail || `Errore HTTP ${response.status}`;
     return payload;
   }
 
@@ -121,6 +123,19 @@
     };
   }
 
+  async function loadBillingData() {
+    const [summary, invoices] = await Promise.all([
+      api("/api/portal/billing/summary"),
+      api("/api/portal/billing/invoices")
+    ]);
+    if (summary.error || summary.detail) throw new Error(summary.error || summary.detail);
+    state.billing = summary;
+    state.invoices = Array.isArray(invoices) ? invoices : [];
+  }
+
+  function fmtMoney(value, currency="EUR") {
+    return new Intl.NumberFormat("it-IT", {style:"currency", currency}).format(Number(value || 0));
+  }
 
   async function loadSupportData() {
     const [tickets, notifications, meta] = await Promise.all([
@@ -146,7 +161,7 @@
     $$(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.page === page));
     pageTitle.textContent = ({
       dashboard:"Dashboard",licenses:"Licenze",downloads:"Download Center",releases:"Release Center",
-      docs:"Documentazione",academy:"Academy",tickets:"Ticket",billing:"Billing",
+      docs:"Documentazione",academy:"Academy",tickets:"Ticket",billing:"Abbonamento",
       notifications:"Notifiche",profile:"Profilo"
     })[page] || page;
   }
@@ -256,16 +271,35 @@
       </tbody></table></div></section>`;
     },
     billing() {
-      return pageHead("Billing","Piano, rinnovi, fatture e gestione abbonamento.",
-        `<button class="btn btn-primary" id="openBilling">Gestisci abbonamento</button>`) + `
+      const b = state.billing || {};
+      const payment = b.payment_method;
+      const paymentText = payment ? `${String(payment.brand || "Carta").toUpperCase()} •••• ${payment.last4} · ${payment.exp_month}/${payment.exp_year}` : "Non disponibile";
+      const cancelText = b.cancel_at_period_end ? "Cancellazione programmata" : "Rinnovo automatico";
+      const stripeConnected = Boolean(b.stripe_customer_connected);
+      const actions = `<button class="btn btn-secondary" id="syncBilling">Sincronizza</button>${stripeConnected ? ` <button class="btn btn-primary" id="openBilling">Gestisci con Stripe</button>` : ""}`;
+      const checkoutPlans = !stripeConnected ? `
+        <section class="card" style="margin-top:18px">
+          <h3>Scegli il tuo piano</h3>
+          <p>Completa un pagamento di prova su Stripe Test Mode. Dopo il checkout potrai gestire upgrade, downgrade, carta e cancellazione dal portale Stripe.</p>
+          <div class="quick-grid" style="margin-top:18px">
+            <button class="quick-action checkout-plan" data-plan="PROFESSIONAL"><strong>Professional</strong><span>Passa al piano Professional</span></button>
+            <button class="quick-action checkout-plan" data-plan="BUSINESS"><strong>Business</strong><span>Passa al piano Business</span></button>
+            <button class="quick-action checkout-plan" data-plan="ENTERPRISE"><strong>Enterprise</strong><span>Passa al piano Enterprise</span></button>
+          </div>
+          <p class="kpi-label" style="margin-top:16px">Il pagamento è simulato: nessun addebito reale.</p>
+        </section>` : `
+        <section class="card" style="margin-top:18px"><h3>Gestione abbonamento</h3><p>Upgrade, downgrade, aggiornamento carta, cancellazione e riattivazione vengono eseguiti nel Customer Portal Stripe.</p><p><strong>Stato:</strong> ${esc(b.status || "—")} · <strong>Provider:</strong> ${esc(b.provider || "internal")} · <strong>Fine prevista:</strong> ${fmtDate(b.cancel_date)}</p></section>`;
+      return pageHead("Abbonamento","Piano, pagamento, fatture e gestione sicura tramite Stripe.", actions) + `
       <div class="grid kpi-grid">
-        <article class="card kpi"><span class="kpi-label">Piano</span><div class="kpi-value">${esc(data.customer.plan)}</div><span class="kpi-meta">Attivo</span></article>
-        <article class="card kpi"><span class="kpi-label">Canone</span><div class="kpi-value">€49</div><span class="kpi-meta">mensile</span></article>
-        <article class="card kpi"><span class="kpi-label">Prossimo rinnovo</span><div class="kpi-value" style="font-size:20px">${esc(data.license.renewal)}</div><span class="kpi-meta">Rinnovo automatico</span></article>
-        <article class="card kpi"><span class="kpi-label">Provider</span><div class="kpi-value" style="font-size:24px">Stripe</div><span class="kpi-meta">Pagamento sicuro</span></article>
+        <article class="card kpi"><span class="kpi-label">Piano</span><div class="kpi-value">${esc(b.plan || data.customer.plan)}</div><span class="kpi-meta">${esc(b.status || "active")}</span></article>
+        <article class="card kpi"><span class="kpi-label">Canone</span><div class="kpi-value">${fmtMoney(b.price_month, b.currency || "EUR")}</div><span class="kpi-meta">al mese</span></article>
+        <article class="card kpi"><span class="kpi-label">Prossimo rinnovo</span><div class="kpi-value" style="font-size:20px">${fmtDate(b.renewal_date)}</div><span class="kpi-meta">${cancelText}</span></article>
+        <article class="card kpi"><span class="kpi-label">Metodo pagamento</span><div class="kpi-value" style="font-size:18px">${esc(paymentText)}</div><span class="kpi-meta">Stripe Test Mode</span></article>
       </div>
-      <section class="card" style="margin-top:18px"><h3>Fatture recenti</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>Numero</th><th>Data</th><th>Descrizione</th><th>Importo</th><th>Stato</th><th></th></tr></thead><tbody>
-        ${data.invoices.map(i=>`<tr><td><strong>${esc(i.number)}</strong></td><td>${esc(i.date)}</td><td>${esc(i.description)}</td><td>${esc(i.amount)}</td><td><span class="status status-active">${esc(i.status)}</span></td><td><button class="btn btn-secondary btn-small invoice-btn" data-invoice="${esc(i.number)}">Esporta</button></td></tr>`).join("")}
+      ${b.sync_error ? `<p class="notice" style="margin-top:18px">Ultima sincronizzazione Stripe non riuscita: ${esc(b.sync_error)}</p>` : ""}
+      ${checkoutPlans}
+      <section class="card" style="margin-top:18px"><h3>Fatture reali</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>Numero</th><th>Data</th><th>Importo</th><th>Stato</th><th></th></tr></thead><tbody>
+        ${state.invoices.length ? state.invoices.map(i=>`<tr><td><strong>${esc(i.number)}</strong></td><td>${fmtDate(i.created_at)}</td><td>${fmtMoney(i.amount,i.currency||"EUR")}</td><td><span class="status ${statusClass(i.status)}">${esc(i.status)}</span></td><td>${i.hosted_invoice_url||i.invoice_pdf?`<button class="btn btn-secondary btn-small invoice-open" data-url="${esc(i.hosted_invoice_url||i.invoice_pdf)}">Apri</button>`:"—"}</td></tr>`).join("") : `<tr><td colspan="5">Nessuna fattura Stripe disponibile.</td></tr>`}
       </tbody></table></div></section>`;
     },
     notifications() {
@@ -335,13 +369,25 @@
     $$('.release-notes-btn').forEach(b=>b.addEventListener('click',async()=>{const response=await fetch(`${cfg.apiUrl}/api/portal/releases/${b.dataset.id}/notes`,{headers:{Authorization:`Bearer ${state.token}`}});if(!response.ok){toast('Impossibile aprire le note');return;}const text=await response.text();downloadText(`release-notes-${b.dataset.id}.txt`,text);}));
     $('#newTicket')?.addEventListener('click',newTicketModal);
     $$('.ticket-row').forEach(r=>r.addEventListener('click',()=>{const t=state.tickets.find(x=>x.id===Number(r.dataset.ticketId));if(t)ticketDetailModal(t);}));
-    $('#openBilling')?.addEventListener('click',()=>toast('Collegamento Stripe Customer Portal previsto nel PACK 02D'));
+    $('#openBilling')?.addEventListener('click',async()=>{const result=await api('/api/portal/billing/portal-session',{method:'POST'});if(result.error||result.detail){toast(result.error||result.detail);return;}window.location.href=result.portal_url;});
+    $$('.checkout-plan').forEach(button=>button.addEventListener('click',async()=>{
+      const plan=button.dataset.plan;
+      const original=button.innerHTML;
+      button.disabled=true;
+      button.innerHTML=`<strong>Connessione a Stripe…</strong><span>Attendi qualche secondo</span>`;
+      const returnUrl=`${window.location.origin}${window.location.pathname}`;
+      const result=await api(`/api/portal/billing/checkout/${plan}`,{method:'POST',body:JSON.stringify({return_url:returnUrl})});
+      if(result.error||result.detail){button.disabled=false;button.innerHTML=original;toast(result.error||result.detail);return;}
+      if(!result.checkout_url){button.disabled=false;button.innerHTML=original;toast('Stripe Checkout non disponibile');return;}
+      window.location.href=result.checkout_url;
+    }));
+    $('#syncBilling')?.addEventListener('click',async()=>{const result=await api('/api/portal/billing/sync',{method:'POST'});if(result.error||result.detail){toast(result.error||result.detail);return;}await Promise.all([loadBillingData(),loadPortalCommerceData()]);toast(result.message);render('billing');});
+    $$('.invoice-open').forEach(b=>b.addEventListener('click',()=>window.open(b.dataset.url,'_blank','noopener')));
     $('#markAllRead')?.addEventListener('click',async()=>{await api('/api/portal/notifications/read-all',{method:'POST'});await loadSupportData();unreadCount();render('notifications')});
     $$('.read-notification').forEach(b=>b.addEventListener('click',async()=>{await api(`/api/portal/notifications/${b.dataset.id}/read`,{method:'POST'});await loadSupportData();unreadCount();render('notifications')}));
     $$('.filter-btn').forEach(b=>b.addEventListener('click',()=>{$$('.filter-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');$$('[data-type]').forEach(c=>c.style.display=b.dataset.filter==='Tutti'||c.dataset.type===b.dataset.filter?'':'none')}));
     $$('.doc-action').forEach(b=>b.addEventListener('click',()=>toast(`${b.dataset.doc}: richiesta registrata`)));
     $$('.course-btn').forEach(b=>b.addEventListener('click',()=>toast('Corso aperto in modalità demo')));
-    $$('.invoice-btn').forEach(b=>b.addEventListener('click',()=>downloadText(`${b.dataset.invoice}.txt`,`Fattura demo ${b.dataset.invoice}`)));
     $('#profileForm')?.addEventListener('submit',async e=>{
       e.preventDefault(); const f=new FormData(e.currentTarget);
       const payload={name:f.get('name'),email:f.get('email'),company_name:f.get('company'),job_title:f.get('role'),phone:'',preferred_language:'it'};
@@ -355,13 +401,33 @@
     });
   }
 
+  async function completeStripeCheckoutFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("billing") !== "success") return false;
+    const sessionId = params.get("session_id");
+    if (!sessionId) {
+      toast("Pagamento completato, ma manca l'identificativo Stripe");
+      return false;
+    }
+    const result = await api('/api/portal/billing/checkout/complete', {
+      method: 'POST',
+      body: JSON.stringify({session_id: sessionId})
+    });
+    if (result.error || result.detail) throw new Error(result.error || result.detail);
+    history.replaceState({}, document.title, window.location.pathname);
+    toast(result.message || "Abbonamento aggiornato");
+    return true;
+  }
+
   async function openPortal() {
     try {
       await loadRealProfile();
+      const checkoutCompleted = await completeStripeCheckoutFromUrl();
       await loadPortalCommerceData();
+      await loadBillingData();
       await loadSupportData();
       loginView.classList.add("hidden"); portalView.classList.remove("hidden");
-      unreadCount(); render("dashboard");
+      unreadCount(); render(checkoutCompleted ? "billing" : "dashboard");
     } catch (error) {
       state.token=""; localStorage.removeItem("o360_portal_token");
       portalView.classList.add("hidden"); loginView.classList.remove("hidden");
