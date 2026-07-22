@@ -15,7 +15,11 @@
     releases: [],
     activations: [],
     billing: null,
-    invoices: []
+    invoices: [],
+    marketplace: [],
+    marketplaceCategories: [],
+    myModules: [],
+    loadingSecondary: false
   };
 
   const loginView = $("#loginView");
@@ -59,9 +63,10 @@
     return payload;
   }
 
-  async function loadRealProfile() {
-    const result = await api("/api/portal/profile");
-    if (result.error) throw new Error(result.error);
+  const PROFILE_CACHE_KEY = "o360_portal_profile_cache_v1";
+
+  function applyProfile(result) {
+    if (!result || !result.name) return;
     state.profile = result;
     data.customer.name = result.name;
     data.customer.initials = result.name.split(/\s+/).map(x=>x[0]).join("").slice(0,2).toUpperCase();
@@ -71,6 +76,31 @@
     $$(".avatar").forEach(x=>x.textContent=data.customer.initials);
     const chip=$(".user-chip span:last-child");
     if(chip) chip.innerHTML=`<strong>${esc(result.name)}</strong><small>${esc(result.role)}</small>`;
+  }
+
+  function restoreCachedProfile() {
+    try {
+      const cached = JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY) || "null");
+      if (!cached || !cached.profile || Date.now() - cached.savedAt > 86400000) return false;
+      applyProfile(cached.profile);
+      return true;
+    } catch {
+      localStorage.removeItem(PROFILE_CACHE_KEY);
+      return false;
+    }
+  }
+
+  function saveCachedProfile(profile) {
+    try {
+      localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({profile, savedAt:Date.now()}));
+    } catch {}
+  }
+
+  async function loadRealProfile() {
+    const result = await api("/api/portal/profile");
+    if (result.error) throw new Error(result.error);
+    applyProfile(result);
+    saveCachedProfile(result);
   }
 
   function fmtDate(value) {
@@ -137,6 +167,13 @@
     return new Intl.NumberFormat("it-IT", {style:"currency", currency}).format(Number(value || 0));
   }
 
+  async function loadMarketplaceData() {
+    const [categories,catalog,myModules]=await Promise.all([api("/api/marketplace/categories"),api("/api/marketplace/catalog"),api("/api/marketplace/my-modules")]);
+    state.marketplaceCategories=Array.isArray(categories)?categories:[];
+    state.marketplace=Array.isArray(catalog)?catalog:[];
+    state.myModules=Array.isArray(myModules)?myModules:[];
+  }
+
   async function loadSupportData() {
     const [tickets, notifications, meta] = await Promise.all([
       api("/api/portal/tickets"), api("/api/portal/notifications"), api("/api/portal/tickets/meta")
@@ -160,7 +197,7 @@
     state.page = page;
     $$(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.page === page));
     pageTitle.textContent = ({
-      dashboard:"Dashboard",licenses:"Licenze",downloads:"Download Center",releases:"Release Center",
+      dashboard:"Dashboard",licenses:"Licenze",downloads:"Download Center",releases:"Release Center",marketplace:"Marketplace","my-modules":"I miei moduli",
       docs:"Documentazione",academy:"Academy",tickets:"Ticket",billing:"Abbonamento",
       notifications:"Notifiche",profile:"Profilo"
     })[page] || page;
@@ -168,14 +205,14 @@
 
   const views = {
     dashboard() {
-      const lic = data.license, c = data.customer;
+      const lic = data.license || {usedSeats:"—",seats:"—"}, c = data.customer;
       return pageHead(`Benvenuto, ${esc(c.name.split(" ")[0])}`, `${esc(c.company)} · ${esc(c.tenant)}`,
         `<button class="btn btn-primary" data-page="downloads">Apri Download Center</button>`) + `
       <div class="grid kpi-grid">
         <article class="card kpi"><span class="kpi-label">Piano</span><div class="kpi-value">${esc(c.plan)}</div><span class="kpi-meta">Licenza attiva</span></article>
         <article class="card kpi"><span class="kpi-label">Versione</span><div class="kpi-value">1.0.0</div><span class="kpi-meta">RC1 disponibile</span></article>
-        <article class="card kpi"><span class="kpi-label">Postazioni</span><div class="kpi-value">${lic.usedSeats}/${lic.seats}</div><span class="kpi-meta">3 disponibili</span></article>
-        <article class="card kpi"><span class="kpi-label">Ticket aperti</span><div class="kpi-value">${state.tickets.filter(t=>!["RISOLTO","CHIUSO"].includes(t.status)).length}</div><span class="kpi-meta">Supporto operativo</span></article>
+        <article class="card kpi"><span class="kpi-label">Postazioni</span><div class="kpi-value">${state.loadingSecondary ? "…" : `${lic.usedSeats}/${lic.seats}`}</div><span class="kpi-meta">3 disponibili</span></article>
+        <article class="card kpi"><span class="kpi-label">Ticket aperti</span><div class="kpi-value">${state.loadingSecondary ? "…" : state.tickets.filter(t=>!["RISOLTO","CHIUSO"].includes(t.status)).length}</div><span class="kpi-meta">Supporto operativo</span></article>
       </div>
       <div class="grid two-col" style="margin-top:18px">
         <section class="card">
@@ -302,6 +339,14 @@
         ${state.invoices.length ? state.invoices.map(i=>`<tr><td><strong>${esc(i.number)}</strong></td><td>${fmtDate(i.created_at)}</td><td>${fmtMoney(i.amount,i.currency||"EUR")}</td><td><span class="status ${statusClass(i.status)}">${esc(i.status)}</span></td><td>${i.hosted_invoice_url||i.invoice_pdf?`<button class="btn btn-secondary btn-small invoice-open" data-url="${esc(i.hosted_invoice_url||i.invoice_pdf)}">Apri</button>`:"—"}</td></tr>`).join("") : `<tr><td colspan="5">Nessuna fattura Stripe disponibile.</td></tr>`}
       </tbody></table></div></section>`;
     },
+    marketplace() {
+      return pageHead("Marketplace","Scopri e installa nuovi moduli Orizzonte360.") + `
+      <section class="card"><div class="market-toolbar"><input id="marketSearch" placeholder="Cerca moduli"><select id="marketCategory"><option value="">Tutte le categorie</option>${state.marketplaceCategories.map(c=>`<option value="${esc(c.slug)}">${esc(c.name)}</option>`).join("")}</select></div></section>
+      <div class="item-grid" id="marketGrid">${state.marketplace.map(m=>`<article class="resource-card market-card" data-name="${esc((m.name+' '+m.short_description).toLowerCase())}" data-category="${esc(m.category?.slug||'')}"><div class="resource-meta"><span>${esc(m.category?.name||'Marketplace')}</span><span>${esc(m.required_plan)}</span></div><h3>${esc(m.icon)} ${esc(m.name)}</h3><p>${esc(m.short_description)}</p><div class="resource-meta"><strong>${m.billing_type==='FREE'?'Gratis':fmtMoney(m.price,m.currency)}</strong><span>v${esc(m.version)}</span></div>${m.installed?`<button class="btn btn-secondary btn-small" disabled>Installato</button>`:m.billing_type==='FREE'?`<button class="btn btn-primary btn-small market-install" data-id="${m.id}">Installa</button>`:`<button class="btn btn-secondary btn-small" disabled>Disponibile nel PACK 05C</button>`}</article>`).join("")}</div>`;
+    },
+    "my-modules"() {
+      return pageHead("I miei moduli","Installazioni, versioni e licenze Marketplace.") + `<section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>Modulo</th><th>Versione</th><th>Stato</th><th>Installato</th><th></th></tr></thead><tbody>${state.myModules.length?state.myModules.map(x=>`<tr><td><strong>${esc(x.module.icon)} ${esc(x.module.name)}</strong><br><small>${esc(x.license_key)}</small></td><td>${esc(x.installed_version)}</td><td><span class="status ${statusClass(x.status)}">${esc(x.status)}</span></td><td>${fmtDate(x.installed_at)}</td><td>${x.status==='ACTIVE'?`<button class="btn btn-secondary btn-small market-uninstall" data-id="${x.module.id}">Disinstalla</button>`:'—'}</td></tr>`).join(''):`<tr><td colspan="5">Nessun modulo installato.</td></tr>`}</tbody></table></div></section>`;
+    },
     notifications() {
       return pageHead("Notifiche","Release, documentazione, billing e supporto.",
         `<button class="btn btn-secondary" id="markAllRead">Segna tutte come lette</button>`) + `
@@ -356,6 +401,8 @@
     $("#ticketForm",m).addEventListener("submit",async e=>{e.preventDefault();const f=new FormData(e.currentTarget);let result=await api('/api/portal/tickets',{method:'POST',body:JSON.stringify({subject:f.get('subject'),description:f.get('description'),category:f.get('category'),priority:f.get('priority')})});if(result.error){toast(result.error);return;}const file=f.get('file');if(file&&file.size){const fd=new FormData();fd.append('file',file);const upload=await api(`/api/portal/tickets/${result.ticket.id}/attachments`,{method:'POST',body:fd});if(upload.error){toast(`Ticket creato, allegato non caricato: ${upload.error}`);}}await loadSupportData();m.remove();toast('Ticket creato');render('tickets');});
   }
 
+  function filterMarket(){const q=($('#marketSearch')?.value||'').toLowerCase();const c=$('#marketCategory')?.value||'';$$('.market-card').forEach(x=>x.style.display=((!q||x.dataset.name.includes(q))&&(!c||x.dataset.category===c))?'':'none');}
+
   function bindDynamic() {
     $$('[data-page]', content).forEach(x=>x.addEventListener('click',()=>render(x.dataset.page)));
     $('#exportLicense')?.addEventListener('click',()=>downloadText('orizzonte360-licenza.json',JSON.stringify(state.license,null,2),'application/json'));
@@ -381,8 +428,12 @@
       if(!result.checkout_url){button.disabled=false;button.innerHTML=original;toast('Stripe Checkout non disponibile');return;}
       window.location.href=result.checkout_url;
     }));
-    $('#syncBilling')?.addEventListener('click',async()=>{const result=await api('/api/portal/billing/sync',{method:'POST'});if(result.error||result.detail){toast(result.error||result.detail);return;}await Promise.all([loadBillingData(),loadPortalCommerceData()]);toast(result.message);render('billing');});
+    $('#syncBilling')?.addEventListener('click',async()=>{const result=await api('/api/portal/billing/sync',{method:'POST'});if(result.error||result.detail){toast(result.error||result.detail);return;}await Promise.all([loadBillingData(),loadPortalCommerceData(),loadMarketplaceData()]);toast(result.message);render('billing');});
     $$('.invoice-open').forEach(b=>b.addEventListener('click',()=>window.open(b.dataset.url,'_blank','noopener')));
+    $('#marketSearch')?.addEventListener('input',filterMarket);
+    $('#marketCategory')?.addEventListener('change',filterMarket);
+    $$('.market-install').forEach(b=>b.addEventListener('click',async()=>{const r=await api(`/api/marketplace/modules/${b.dataset.id}/install`,{method:'POST',body:JSON.stringify({company_id:null})});if(r.error||r.detail){toast(r.error||r.detail);return;}await loadMarketplaceData();toast(r.message);render('my-modules');}));
+    $$('.market-uninstall').forEach(b=>b.addEventListener('click',async()=>{const r=await api(`/api/marketplace/modules/${b.dataset.id}/uninstall`,{method:'DELETE'});if(r.error||r.detail){toast(r.error||r.detail);return;}await loadMarketplaceData();toast(r.message);render('my-modules');}));
     $('#markAllRead')?.addEventListener('click',async()=>{await api('/api/portal/notifications/read-all',{method:'POST'});await loadSupportData();unreadCount();render('notifications')});
     $$('.read-notification').forEach(b=>b.addEventListener('click',async()=>{await api(`/api/portal/notifications/${b.dataset.id}/read`,{method:'POST'});await loadSupportData();unreadCount();render('notifications')}));
     $$('.filter-btn').forEach(b=>b.addEventListener('click',()=>{$$('.filter-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');$$('[data-type]').forEach(c=>c.style.display=b.dataset.filter==='Tutti'||c.dataset.type===b.dataset.filter?'':'none')}));
@@ -421,16 +472,38 @@
 
   async function openPortal() {
     try {
-      await loadRealProfile();
-      const checkoutCompleted = await completeStripeCheckoutFromUrl();
-      await loadPortalCommerceData();
-      await loadBillingData();
-      await loadSupportData();
-      loginView.classList.add("hidden"); portalView.classList.remove("hidden");
-      unreadCount(); render(checkoutCompleted ? "billing" : "dashboard");
+      state.loadingSecondary = true;
+      restoreCachedProfile();
+      loginView.classList.add("hidden");
+      portalView.classList.remove("hidden");
+      render("dashboard");
+
+      const profilePromise = loadRealProfile();
+      const checkoutPromise = completeStripeCheckoutFromUrl();
+      const secondaryPromise = Promise.all([
+                   loadPortalCommerceData(),
+                   loadBillingData(),
+                   loadSupportData(),
+                   loadMarketplaceData()
+               ]);
+
+      const [profileResult, checkoutCompleted] = await Promise.all([
+        profilePromise,
+        checkoutPromise
+      ]);
+      void profileResult;
+
+      await secondaryPromise;
+      state.loadingSecondary = false;
+      unreadCount();
+      render(checkoutCompleted ? "billing" : state.page);
     } catch (error) {
-      state.token=""; localStorage.removeItem("o360_portal_token");
-      portalView.classList.add("hidden"); loginView.classList.remove("hidden");
+      state.loadingSecondary = false;
+      state.token="";
+      localStorage.removeItem("o360_portal_token");
+      localStorage.removeItem(PROFILE_CACHE_KEY);
+      portalView.classList.add("hidden");
+      loginView.classList.remove("hidden");
       toast(error.message || "Sessione non valida");
     }
   }
@@ -447,7 +520,7 @@
   });
   $("#logoutBtn").addEventListener("click",async()=>{
     try { await api("/api/portal/logout",{method:"POST"}); } catch {}
-    state.token=""; state.profile=null; localStorage.removeItem("o360_portal_token");
+    state.token=""; state.profile=null; localStorage.removeItem("o360_portal_token"); localStorage.removeItem(PROFILE_CACHE_KEY);
     portalView.classList.add("hidden"); loginView.classList.remove("hidden");
   });
   $("#menuToggle").addEventListener("click",()=>sidebar.classList.toggle("open"));

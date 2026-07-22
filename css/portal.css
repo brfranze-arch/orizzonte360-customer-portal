@@ -41,3 +41,11 @@ input,select,textarea{width:100%;border:1px solid var(--line);border-radius:11px
 .ticket-row:hover { background: rgba(79, 120, 255, .08); }
 .ticket-form input[type="file"] { padding: 10px; border: 1px dashed rgba(120,140,180,.5); border-radius: 10px; }
 .modal h4 { margin: 22px 0 10px; }
+:root{--wl-primary:#2563EB;--wl-secondary:#0F172A;--wl-accent:#22C55E;--wl-background:#F8FAFC}
+body{background:var(--wl-background)}
+.sidebar,.login-brand{background-color:var(--wl-secondary)!important}
+.btn-primary,.nav-item.active{background-color:var(--wl-primary)!important}
+a{color:var(--wl-primary)}
+
+/* PACK 05A Marketplace */
+.market-toolbar{display:flex;gap:12px}.market-toolbar input,.market-toolbar select{flex:1;padding:12px;border-radius:10px;border:1px solid var(--border,#dbe4f0)}.market-card strong{font-size:18px}@media(max-width:700px){.market-toolbar{flex-direction:column}}
